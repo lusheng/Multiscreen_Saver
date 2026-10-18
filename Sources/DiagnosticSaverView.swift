@@ -7,7 +7,7 @@ import ImageIO
 final class DiagnosticSaverView: ScreenSaverView {
     private let instance = String(UUID().uuidString.prefix(8))
     private var diagnosticImage: CGImage?
-    private let movingMarker = CALayer()
+    private var markerProgress: CGFloat = 0
     private let label = CATextLayer()
     private let worker = DispatchQueue(label: "com.lusheng.MultiscreenSaver.g1.decode", qos: .userInitiated)
     private var ticket: WorkTicket?
@@ -37,8 +37,6 @@ final class DiagnosticSaverView: ScreenSaverView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.backgroundColor = NSColor.darkGray.cgColor
         layer?.masksToBounds = true
-        movingMarker.backgroundColor = NSColor.white.cgColor
-        layer?.addSublayer(movingMarker)
         label.fontSize = 26; label.alignmentMode = .center
         label.foregroundColor = NSColor.white.cgColor
         label.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
@@ -55,6 +53,7 @@ final class DiagnosticSaverView: ScreenSaverView {
         })
         report("id=\(instance) init pid=\(ProcessInfo.processInfo.processIdentifier) preview=\(isPreview) build=\(Bundle(for: Self.self).object(forInfoDictionaryKey: "CFBundleVersion") ?? "unknown")")
     }
+    override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         diagnosticDraws += 1
@@ -64,6 +63,8 @@ final class DiagnosticSaverView: ScreenSaverView {
         }
         context.saveGState()
         context.clip(to: bounds)
+        // Replace the previous pixels before compositing this frame.
+        context.setBlendMode(.copy)
         context.setFillColor(NSColor.darkGray.cgColor)
         context.fill(bounds)
         if let image = diagnosticImage {
@@ -71,6 +72,13 @@ final class DiagnosticSaverView: ScreenSaverView {
             let size = CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
             let rect = CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
             context.draw(image, in: rect)
+        }
+        context.setBlendMode(.normal)
+        if markerEpoch != nil, !staticPreview {
+            let x = bounds.width * 0.1 + max(0, bounds.width * 0.8 - 50) * markerProgress
+            let markerRect = CGRect(x: x, y: bounds.height * 0.18, width: 50, height: 50)
+            context.setFillColor(NSColor.white.withAlphaComponent(1 - 0.8 * markerProgress).cgColor)
+            context.fill(markerRect)
         }
         context.restoreGState()
     }
@@ -111,10 +119,7 @@ final class DiagnosticSaverView: ScreenSaverView {
               let epoch = markerEpoch, !staticPreview, requested else { return }
         let phase = (CACurrentMediaTime() - epoch).truncatingRemainder(dividingBy: 6) / 3
         let progress = phase <= 1 ? phase : 2 - phase
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        movingMarker.transform = CATransform3DMakeTranslation(max(0, bounds.width * 0.8 - 50) * progress, 0, 0)
-        movingMarker.opacity = Float(1 - 0.8 * progress)
-        CATransaction.commit()
+        markerProgress = CGFloat(progress)
         needsDisplay = true
         layer?.setNeedsDisplay()
         displayIfNeeded()
@@ -134,11 +139,11 @@ final class DiagnosticSaverView: ScreenSaverView {
         if let window {
             report("id=\(instance) windowFacts event=\(event) visible=\(window.isVisible) occluded=\(!window.occlusionState.contains(.visible)) level=\(window.level.rawValue) style=\(window.styleMask.rawValue) activeSpace=\(window.isOnActiveSpace) windowSize=\(Int(window.frame.width))x\(Int(window.frame.height)) visibleRect=\(Int(visibleRect.width))x\(Int(visibleRect.height))")
         }
-        report("id=\(instance) \(event) preview=\(isPreview) attached=\(window != nil) view=\(Int(bounds.width))x\(Int(bounds.height)) screen=\(Int(screen?.frame.width ?? 0))x\(Int(screen?.frame.height ?? 0)) scale=\(screen?.backingScaleFactor ?? 0) animations=\(movingMarker.animationKeys()?.count ?? 0) timer=\(isAnimating) markerActive=\(markerEpoch != nil) frameCallbacks=\(diagnosticFrames)")
+        report("id=\(instance) \(event) preview=\(isPreview) attached=\(window != nil) view=\(Int(bounds.width))x\(Int(bounds.height)) screen=\(Int(screen?.frame.width ?? 0))x\(Int(screen?.frame.height ?? 0)) scale=\(screen?.backingScaleFactor ?? 0) animations=0 timer=\(isAnimating) markerActive=\(markerEpoch != nil) frameCallbacks=\(diagnosticFrames)")
     }
     private func suspend() {
         generation += 1; ticket?.cancel(); ticket = nil; signature = nil
-        movingMarker.removeAllAnimations(); markerEpoch = nil; diagnosticFrames = 0; diagnosticImage = nil
+        markerProgress = 0; markerEpoch = nil; diagnosticFrames = 0; diagnosticImage = nil
         super.stopAnimation()
     }
     private func reconcile() {
@@ -153,7 +158,6 @@ final class DiagnosticSaverView: ScreenSaverView {
         // Keep the native timer paired with the framework's stopAnimation contract.
         if !staticPreview { super.startAnimation() }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        movingMarker.frame = CGRect(x: bounds.width * 0.1, y: bounds.height * 0.18, width: 50, height: 50)
         label.contentsScale = screen.backingScaleFactor
         label.frame = CGRect(x: 0, y: bounds.height * 0.43, width: bounds.width, height: min(150, bounds.height * 0.5))
         label.string = "G1 \(route) · \(staticPreview ? "PREVIEW" : "HOST")\n等待合成图库 · \(instance)"
@@ -204,13 +208,12 @@ final class DiagnosticSaverView: ScreenSaverView {
     }
     private func finishPreview() { super.stopAnimation() }
     private func startMarker() {
-        // The settings fullscreen path may snapshot model layers rather than
-        // present server-side CA animations. Native frames update those values.
+        // Native frames redraw the background and marker together; no moving sublayer.
         markerEpoch = CACurrentMediaTime()
         diagnosticFrames = 0
     }
     deinit {
-        ticket?.cancel(); movingMarker.removeAllAnimations()
+        ticket?.cancel()
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         report("id=\(instance) deinit")
     }
