@@ -18,6 +18,9 @@ final class DiagnosticSaverView: ScreenSaverView {
     private var markerEpoch: CFTimeInterval?
     private var diagnosticFrames = 0
     private var diagnosticDraws = 0
+    private var previousFrameTime: CFTimeInterval?
+    private var frameIntervals: [Double] = []
+    private var frameWorkTimes: [Double] = []
     private static var engineRunning: Bool {
         NSWorkspace.shared.runningApplications.contains {
             $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" && !$0.isTerminated
@@ -117,14 +120,26 @@ final class DiagnosticSaverView: ScreenSaverView {
         if diagnosticFrames % 60 == 0 { reconcile() }
         guard window != nil, bounds.width > 0, bounds.height > 0,
               let epoch = markerEpoch, !staticPreview, requested else { return }
-        let phase = (CACurrentMediaTime() - epoch).truncatingRemainder(dividingBy: 6) / 3
+        let frameStart = CACurrentMediaTime()
+        if let previous = previousFrameTime { frameIntervals.append((frameStart - previous) * 1000) }
+        previousFrameTime = frameStart
+        let phase = (frameStart - epoch).truncatingRemainder(dividingBy: 6) / 3
         let progress = phase <= 1 ? phase : 2 - phase
         markerProgress = CGFloat(progress)
         needsDisplay = true
         layer?.setNeedsDisplay()
         displayIfNeeded()
+        frameWorkTimes.append((CACurrentMediaTime() - frameStart) * 1000)
         diagnosticFrames += 1
         if diagnosticFrames % 300 == 0 {
+            // Callback intervals and synchronous work only, not display presentation timing.
+            let intervals = frameIntervals.sorted()
+            let work = frameWorkTimes.sorted()
+            let p95 = intervals.isEmpty ? 0 : intervals[min(intervals.count - 1, Int(Double(intervals.count) * 0.95))]
+            let workP95 = work.isEmpty ? 0 : work[min(work.count - 1, Int(Double(work.count) * 0.95))]
+            report("id=\(instance) timing samples=\(intervals.count) intervalP95ms=\(p95) intervalMaxMs=\(intervals.last ?? 0) gapsOver25ms=\(intervals.filter { $0 > 25 }.count) workP95ms=\(workP95) workMaxMs=\(work.last ?? 0)")
+            frameIntervals.removeAll(keepingCapacity: true)
+            frameWorkTimes.removeAll(keepingCapacity: true)
             report("id=\(instance) frameCallbacks=\(diagnosticFrames) markerProgress=\(progress)")
         }
     }
@@ -144,6 +159,7 @@ final class DiagnosticSaverView: ScreenSaverView {
     private func suspend() {
         generation += 1; ticket?.cancel(); ticket = nil; signature = nil
         markerProgress = 0; markerEpoch = nil; diagnosticFrames = 0; diagnosticImage = nil
+        previousFrameTime = nil; frameIntervals.removeAll(); frameWorkTimes.removeAll()
         super.stopAnimation()
     }
     private func reconcile() {
