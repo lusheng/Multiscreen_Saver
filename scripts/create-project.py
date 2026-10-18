@@ -20,7 +20,7 @@ for prefix in ['P', 'T']:
     for config in ['Debug', 'Release']:
         settings = 'ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0;'
         if prefix == 'T':
-            settings += ' PRODUCT_NAME = MultiscreenSaver; PRODUCT_BUNDLE_IDENTIFIER = com.lusheng.MultiscreenSaver; WRAPPER_EXTENSION = saver; INFOPLIST_FILE = Sources/Info.plist; GENERATE_INFOPLIST_FILE = NO; CURRENT_PROJECT_VERSION = 6; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone";'
+            settings += ' PRODUCT_NAME = MultiscreenSaver; PRODUCT_BUNDLE_IDENTIFIER = com.lusheng.MultiscreenSaver; WRAPPER_EXTENSION = saver; INFOPLIST_FILE = Sources/Info.plist; GENERATE_INFOPLIST_FILE = NO; CURRENT_PROJECT_VERSION = 13; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone";'
         add(prefix+config.upper(), f'isa = XCBuildConfiguration; name = {config}; buildSettings = {{ {settings} }};')
 text = '// !$*UTF8*$!\n{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(objects)+'\n}; rootObject = ROOT; }\n'
 (root/'MultiscreenSaver.xcodeproj/project.pbxproj').write_text(text)
