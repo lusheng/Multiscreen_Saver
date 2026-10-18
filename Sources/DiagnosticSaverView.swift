@@ -78,7 +78,7 @@ final class DiagnosticSaverView: ScreenSaverView {
         }
         context.setBlendMode(.normal)
         if markerEpoch != nil, !staticPreview {
-            let x = bounds.width * 0.1 + max(0, bounds.width * 0.8 - 50) * markerProgress
+            let x = bounds.width * 0.1 + min(1000, max(0, bounds.width * 0.8 - 50)) * markerProgress
             let markerRect = CGRect(x: x, y: bounds.height * 0.18, width: 50, height: 50)
             context.setFillColor(NSColor.white.withAlphaComponent(1 - 0.8 * markerProgress).cgColor)
             context.fill(markerRect)
