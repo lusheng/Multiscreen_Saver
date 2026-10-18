@@ -2,7 +2,7 @@
 
 面向 **macOS 27 Golden Gate** 的原生照片屏幕保护程序规划：横屏与竖屏分别使用用户指定的本地图库，播放带缩放、平移和交叉淡入淡出的 Ken Burns 照片动画。
 
-**当前状态：2026-10-18，build 16 的 G1 六项实机检查已全部通过，现进入 G2–G5 完整功能开发；产品尚未完成。** 采用 MIT 许可证。参见 [G1 实测记录](docs/validation/g1.md) 和 [构建/测试步骤](docs/g1-testing.md)。
+**当前状态：2026-10-18，build 16 的 G1 六项实机检查已全部通过，G2/G3 首个完整播放器已实现并通过自动检查，build 18 待实机验收；G4 稳定性未执行，产品尚未完成。** 采用 MIT 许可证。参见 [G1 实测记录](docs/validation/g1.md) 、[完整播放器开发步骤](docs/development.md) 和 [G4/G5 状态](docs/validation/g4-g5.md)。
 
 ## 需求
 
