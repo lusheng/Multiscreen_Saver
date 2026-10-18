@@ -1,0 +1,28 @@
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode and local build state
+build/
+DerivedData/
+.build/
+xcuserdata/
+*.xcuserstate
+*.saver/
+*.dSYM/
+*.xcarchive/
+
+# Local configuration and signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# Keep user media and diagnostics outside version control
+LocalPhotos/
+Private/
+local-config/
+*.log
