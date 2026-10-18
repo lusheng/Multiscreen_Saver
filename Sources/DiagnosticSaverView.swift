@@ -88,6 +88,7 @@ final class DiagnosticSaverView: ScreenSaverView {
     override var hasConfigureSheet: Bool { true }
     override var configureSheet: NSWindow? {
         if configuration == nil { configuration = ConfigurationController() }
+        if configuration?.window.isVisible == false { configuration?.beginEditing() }
         if let panel = configuration?.window {
             DispatchQueue.main.async {
                 report("configuration presentation visible=\(panel.isVisible) sheet=\(panel.sheetParent != nil)")

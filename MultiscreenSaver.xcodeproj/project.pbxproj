@@ -1,22 +1,24 @@
 // !$*UTF8*$!
 { archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
-F0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
+F0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Configuration.swift; sourceTree = "<group>"; };
 B0 = { isa = PBXBuildFile; fileRef = F0; };
-F1 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Configuration.swift; sourceTree = "<group>"; };
+F1 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticSaverView.swift; sourceTree = "<group>"; };
 B1 = { isa = PBXBuildFile; fileRef = F1; };
-F2 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticSaverView.swift; sourceTree = "<group>"; };
+F2 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 B2 = { isa = PBXBuildFile; fileRef = F2; };
+F3 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCore.swift; sourceTree = "<group>"; };
+B3 = { isa = PBXBuildFile; fileRef = F3; };
 ROOT = { isa = PBXProject; buildConfigurationList = PCL; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; mainGroup = GROUP; productRefGroup = PRODUCTS; projectDirPath = ""; targets = (TARGET); };
 GROUP = { isa = PBXGroup; children = (SOURCES, PRODUCTS); sourceTree = "<group>"; };
-SOURCES = { isa = PBXGroup; path = Sources; children = (F0, F1, F2); sourceTree = "<group>"; };
+SOURCES = { isa = PBXGroup; path = Sources; children = (F0, F1, F2, F3); sourceTree = "<group>"; };
 PRODUCTS = { isa = PBXGroup; children = (PRODUCT); name = Products; sourceTree = "<group>"; };
 PRODUCT = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = MultiscreenSaver.saver; sourceTree = BUILT_PRODUCTS_DIR; };
 TARGET = { isa = PBXNativeTarget; name = MultiscreenSaver; buildConfigurationList = TCL; buildPhases = (SBUILD); buildRules = (); dependencies = (); productName = MultiscreenSaver; productReference = PRODUCT; productType = "com.apple.product-type.bundle"; };
-SBUILD = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B0, B1, B2); runOnlyForDeploymentPostprocessing = 0; };
+SBUILD = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B0, B1, B2, B3); runOnlyForDeploymentPostprocessing = 0; };
 PCL = { isa = XCConfigurationList; buildConfigurations = (PDEBUG, PRELEASE); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 PDEBUG = { isa = XCBuildConfiguration; name = Debug; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0; }; };
 PRELEASE = { isa = XCBuildConfiguration; name = Release; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0; }; };
 TCL = { isa = XCConfigurationList; buildConfigurations = (TDEBUG, TRELEASE); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
-TDEBUG = { isa = XCBuildConfiguration; name = Debug; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0; PRODUCT_NAME = MultiscreenSaver; PRODUCT_BUNDLE_IDENTIFIER = com.lusheng.MultiscreenSaver; WRAPPER_EXTENSION = saver; INFOPLIST_FILE = Sources/Info.plist; GENERATE_INFOPLIST_FILE = NO; CURRENT_PROJECT_VERSION = 16; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; };
-TRELEASE = { isa = XCBuildConfiguration; name = Release; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0; PRODUCT_NAME = MultiscreenSaver; PRODUCT_BUNDLE_IDENTIFIER = com.lusheng.MultiscreenSaver; WRAPPER_EXTENSION = saver; INFOPLIST_FILE = Sources/Info.plist; GENERATE_INFOPLIST_FILE = NO; CURRENT_PROJECT_VERSION = 16; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; };
+TDEBUG = { isa = XCBuildConfiguration; name = Debug; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0; PRODUCT_NAME = MultiscreenSaver; PRODUCT_BUNDLE_IDENTIFIER = com.lusheng.MultiscreenSaver; WRAPPER_EXTENSION = saver; INFOPLIST_FILE = Sources/Info.plist; GENERATE_INFOPLIST_FILE = NO; CURRENT_PROJECT_VERSION = 17; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; };
+TRELEASE = { isa = XCBuildConfiguration; name = Release; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 27.0; ARCHS = arm64; SWIFT_VERSION = 5.0; PRODUCT_NAME = MultiscreenSaver; PRODUCT_BUNDLE_IDENTIFIER = com.lusheng.MultiscreenSaver; WRAPPER_EXTENSION = saver; INFOPLIST_FILE = Sources/Info.plist; GENERATE_INFOPLIST_FILE = NO; CURRENT_PROJECT_VERSION = 17; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; };
 }; rootObject = ROOT; }
