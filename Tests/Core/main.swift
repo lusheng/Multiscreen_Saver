@@ -59,3 +59,48 @@ check(SaverSettings.load(from: Data([0]), legacyFolders: ["H": Data([3])]).folde
 let invalid = Data("{\"version\":1,\"folders\":{},\"duration\":-1,\"fade\":3,\"maximumZoom\":1.2,\"random\":true,\"recursive\":false}".utf8)
 check(SaverSettings.load(from: invalid).duration == 5, "corrupt numeric defaults")
 print("PASS: settings, catalog filters/cancellation, 8000 seeded rounds, sequential order, quarantine and session isolation")
+var geometryRNG = SeededGenerator(seed: 917)
+for i in 0..<10_000 {
+    let viewport = i % 2 == 0 ? CGSize(width: 2560, height: 1440) : CGSize(width: 1440, height: 2560)
+    let size = CGSize(width: Int.random(in: 1...30000, using: &geometryRNG), height: Int.random(in: 1...30000, using: &geometryRNG))
+    let path = KenBurnsPath(image: size, viewport: viewport, backingScale: 2, maximumZoom: Double.random(in: 1.1...1.2, using: &geometryRNG), generator: &geometryRNG)
+    for j in 0...100 {
+        let r = path.rect(progress: Double(j) / 100)
+        check(r.minX <= -0.999 && r.minY <= -0.999 && r.maxX >= viewport.width + 0.999 && r.maxY >= viewport.height + 0.999, "coverage including sampling margin")
+        check(abs(r.width / r.height - size.width / size.height) < 0.00001, "aspect preserved")
+    }
+}
+print("PASS: 10000 seeded geometry paths, 101 samples each, coverage and aspect invariants")
+for size in [CGSize(width: 1, height: 1), CGSize(width: 1, height: 100000), CGSize(width: 100000, height: 1), CGSize(width: 2560, height: 1440)] {
+    for viewport in [CGSize(width: 2560, height: 1440), CGSize(width: 1440, height: 2560), CGSize(width: 1, height: 1)] {
+        for scale in [CGFloat(1), CGFloat(2)] {
+            let path = KenBurnsPath(image: size, viewport: viewport, backingScale: scale, maximumZoom: 1.1, generator: &geometryRNG)
+            for t in [-1.0, 0, 0.5, 1, 2] {
+                let rect = path.rect(progress: t)
+                check(rect.minX <= 0 && rect.minY <= 0 && rect.maxX >= viewport.width && rect.maxY >= viewport.height, "fixed extremes and clamped progress")
+            }
+        }
+    }
+}
+var changed = PlaybackQueue(seed: 3)
+changed.beginRound(snapshot: Array(deep.prefix(2)), random: false)
+_ = changed.next(); _ = changed.next()
+changed.beginRound(snapshot: [deep[2]], random: false)
+check(changed.next() == deep[2] && changed.next() == nil, "round snapshot replacement")
+var quarantine = PlaybackQueue(seed: 1)
+quarantine.beginRound(snapshot: deep, random: false)
+while let item = quarantine.next() { quarantine.reject(item) }
+quarantine.beginRound(snapshot: deep, random: true)
+check(quarantine.next() == nil, "all bad files terminate")
+print("PASS: fixed geometric extremes, snapshot replacement and all-bad termination")
+func timing(_ t: Double, _ current: Double?, _ incoming: Double?, _ ready: Bool = true, _ fade: Double = 1.5) -> PlaybackTiming {
+    PlaybackTiming.evaluate(now: t, currentStart: current, incomingStart: incoming, ready: ready, duration: 5, fade: fade)
+}
+check(!timing(4.999,0,nil).startNext && timing(5,0,nil).startNext, "5-second start interval")
+check(!timing(6.499,0,5).finishIncoming && !timing(6.499,0,5).startNext, "two moving images through overlap")
+check(timing(6.5,0,5).finishIncoming && !timing(6.5,0,5).startNext, "1.5-second transition end")
+check(timing(10,5,nil).startNext, "next interval starts at incoming start, not transition end")
+check(!timing(7,0,nil,false).startNext && timing(7,0,nil,true).startNext, "late decode preserves current until ready")
+check(!timing(10,7,nil).startNext && timing(12,7,nil).startNext, "delayed transition rebases time")
+check(timing(5,0,nil,true,0).startNext, "zero fade hard cut")
+print("PASS: default timeline, overlap, zero fade, delayed decode and rebased interval")

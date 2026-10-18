@@ -1,237 +1,155 @@
 import AppKit
 import ScreenSaver
 import QuartzCore
-import ImageIO
 
 @objc(MultiscreenSaverView)
 final class DiagnosticSaverView: ScreenSaverView {
+    private struct Card {
+        let photo: DecodedPhoto
+        let path: KenBurnsPath
+        let start: CFTimeInterval
+    }
     private let instance = String(UUID().uuidString.prefix(8))
-    private var diagnosticImage: CGImage?
-    private var markerProgress: CGFloat = 0
-    private let label = CATextLayer()
-    private let worker = DispatchQueue(label: "com.lusheng.MultiscreenSaver.g1.decode", qos: .userInitiated)
-    private var ticket: WorkTicket?
-    private var generation = 0
-    private var requested = false
-    private var staticPreview = true
-    private var classified = false
-    private var markerEpoch: CFTimeInterval?
-    private var diagnosticFrames = 0
-    private var diagnosticDraws = 0
-    private var previousFrameTime: CFTimeInterval?
-    private var frameIntervals: [Double] = []
-    private var frameWorkTimes: [Double] = []
-    private static var engineRunning: Bool {
-        NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" && !$0.isTerminated
-        }
-    }
-    private var signature: String?
     private var configuration: ConfigurationController?
+    private var requested = false
+    private var classified = false
+    private var staticPreview = true
+    private var signature: String?
+    private var generation = 0
+    private var session: PhotoSession?
+    private var settings = SaverSettings()
+    private var rng = SeededGenerator(seed: UInt64.random(in: 0...UInt64.max))
+    private var current: Card?
+    private var incoming: Card?
+    private var prepared: DecodedPhoto?
+    private var loading = false
+    private var failed = false
+    private var status = "请选择照片文件夹"
     private var observers: [NSObjectProtocol] = []
-
-    override init?(frame: NSRect, isPreview: Bool) {
-        super.init(frame: frame, isPreview: isPreview)
-        setup()
+    private var frames = 0
+    private static var engineRunning: Bool {
+        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" && !$0.isTerminated }
     }
-    required init?(coder: NSCoder) { super.init(coder: coder); setup() }
+    override init?(frame: NSRect, isPreview: Bool) { super.init(frame: frame, isPreview: isPreview);setup() }
+    required init?(coder: NSCoder) { super.init(coder: coder);setup() }
     private func setup() {
-        wantsLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
-        layer?.backgroundColor = NSColor.darkGray.cgColor
-        layer?.masksToBounds = true
-        label.fontSize = 26; label.alignmentMode = .center
-        label.foregroundColor = NSColor.white.cgColor
-        label.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
-        label.isWrapped = true
-        layer?.addSublayer(label)
-        animationTimeInterval = 1.0 / 60.0 // Native frame callbacks drive model-layer diagnostics.
-        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, note.object as? NSWindow === self.window else { return }; self.reconcile()
-        })
-        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeBackingPropertiesNotification, object: nil, queue: .main) { [weak self] _ in self?.reconcile() })
-        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, note.object as? NSWindow === self.window else { return }
-            self.reportState("occlusion")
-        })
-        report("id=\(instance) init pid=\(ProcessInfo.processInfo.processIdentifier) preview=\(isPreview) build=\(Bundle(for: Self.self).object(forInfoDictionaryKey: "CFBundleVersion") ?? "unknown")")
+        wantsLayer = true;layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layer?.masksToBounds = true;animationTimeInterval = 1 / 60
+        for name in [NSWindow.didChangeScreenNotification, NSWindow.didChangeBackingPropertiesNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, note.object as? NSWindow === self.window else { return };self.reconcile()
+            })
+        }
+        report("id=\(instance) init preview=\(isPreview) build=\(Bundle(for: Self.self).object(forInfoDictionaryKey: "CFBundleVersion") ?? "unknown")")
     }
     override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        diagnosticDraws += 1
-        if diagnosticDraws == 1 || diagnosticDraws % 300 == 0 {
-            let clip = context.boundingBoxOfClipPath
-            report("id=\(instance) draws=\(diagnosticDraws) dirty=\(Int(dirtyRect.width))x\(Int(dirtyRect.height)) clip=\(Int(clip.width))x\(Int(clip.height))")
-        }
-        context.saveGState()
-        context.clip(to: bounds)
-        // Replace the previous pixels before compositing this frame.
-        context.setBlendMode(.copy)
-        context.setFillColor(NSColor.darkGray.cgColor)
-        context.fill(bounds)
-        if let image = diagnosticImage {
-            let scale = max(bounds.width / CGFloat(image.width), bounds.height / CGFloat(image.height))
-            let size = CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
-            let rect = CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
-            context.draw(image, in: rect)
-        }
-        context.setBlendMode(.normal)
-        if markerEpoch != nil, !staticPreview {
-            let x = bounds.width * 0.1 + min(1000, max(0, bounds.width * 0.8 - 50)) * markerProgress
-            let markerRect = CGRect(x: x, y: bounds.height * 0.18, width: 50, height: 50)
-            context.setFillColor(NSColor.white.withAlphaComponent(1 - 0.8 * markerProgress).cgColor)
-            context.fill(markerRect)
-        }
-        context.restoreGState()
-    }
     override var hasConfigureSheet: Bool { true }
     override var configureSheet: NSWindow? {
         if configuration == nil { configuration = ConfigurationController() }
         if configuration?.window.isVisible == false { configuration?.beginEditing() }
         if let panel = configuration?.window {
-            DispatchQueue.main.async {
-                report("configuration presentation visible=\(panel.isVisible) sheet=\(panel.sheetParent != nil)")
-                if !panel.isVisible { panel.makeKeyAndOrderFront(nil) }
-                report("configuration afterOrder visible=\(panel.isVisible)")
-            }
+            DispatchQueue.main.async { if !panel.isVisible { panel.makeKeyAndOrderFront(nil) } }
         }
         return configuration?.window
     }
     override func startAnimation() {
         if !classified {
-            // G1 candidate: settings fullscreen rendering starts after loginwindow
-            // becomes frontmost. Existing thumbnail instances retain their identity.
             let systemPresentation = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.loginwindow"
             staticPreview = isPreview || !(Self.engineRunning || systemPresentation)
             classified = true
         }
-        requested = true; reportState("start")
-        reconcile()
+        requested = true;reconcile()
     }
-    override func stopAnimation() {
-        requested = false; suspend(); reportState("stop")
-        super.stopAnimation()
-    }
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); reportState("window"); reconcile() }
-    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); reconcile() }
-    override func animateOneFrame() {
-        // Screen/size/backing changes already reconcile via lifecycle callbacks.
-        // Retain a bounded fallback check without formatting signatures per frame.
-        if diagnosticFrames % 60 == 0 { reconcile() }
-        guard window != nil, bounds.width > 0, bounds.height > 0,
-              let epoch = markerEpoch, !staticPreview, requested else { return }
-        let frameStart = CACurrentMediaTime()
-        if let previous = previousFrameTime { frameIntervals.append((frameStart - previous) * 1000) }
-        previousFrameTime = frameStart
-        let phase = (frameStart - epoch).truncatingRemainder(dividingBy: 6) / 3
-        let progress = phase <= 1 ? phase : 2 - phase
-        markerProgress = CGFloat(progress)
-        needsDisplay = true
-        layer?.setNeedsDisplay()
-        displayIfNeeded()
-        frameWorkTimes.append((CACurrentMediaTime() - frameStart) * 1000)
-        diagnosticFrames += 1
-        if diagnosticFrames % 300 == 0 {
-            // Callback intervals and synchronous work only, not display presentation timing.
-            let intervals = frameIntervals.sorted()
-            let work = frameWorkTimes.sorted()
-            let p95 = intervals.isEmpty ? 0 : intervals[min(intervals.count - 1, Int(Double(intervals.count) * 0.95))]
-            let workP95 = work.isEmpty ? 0 : work[min(work.count - 1, Int(Double(work.count) * 0.95))]
-            report("id=\(instance) timing samples=\(intervals.count) intervalP95ms=\(p95) intervalMaxMs=\(intervals.last ?? 0) gapsOver25ms=\(intervals.filter { $0 > 25 }.count) workP95ms=\(workP95) workMaxMs=\(work.last ?? 0)")
-            frameIntervals.removeAll(keepingCapacity: true)
-            frameWorkTimes.removeAll(keepingCapacity: true)
-            report("id=\(instance) frameCallbacks=\(diagnosticFrames) markerProgress=\(progress)")
-        }
-    }
-
-    private func reportState(_ event: String) {
-        let screen = window?.screen
-        let engineRunning = Self.engineRunning
-        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let frontKind = front == "com.apple.systempreferences" ? "settings" : (front == "com.apple.ScreenSaver.Engine" ? "engine" : (front == "com.apple.loginwindow" ? "loginwindow" : "other"))
-        report("id=\(instance) presentationFacts event=\(event) systemOptions=\(NSApp.currentSystemPresentationOptions.rawValue) appOptions=\(NSApp.presentationOptions.rawValue) front=\(frontKind)")
-        report("id=\(instance) engineFacts event=\(event) running=\(engineRunning) staticPreview=\(staticPreview)")
-        if let window {
-            report("id=\(instance) windowFacts event=\(event) visible=\(window.isVisible) occluded=\(!window.occlusionState.contains(.visible)) level=\(window.level.rawValue) style=\(window.styleMask.rawValue) activeSpace=\(window.isOnActiveSpace) windowSize=\(Int(window.frame.width))x\(Int(window.frame.height)) visibleRect=\(Int(visibleRect.width))x\(Int(visibleRect.height))")
-        }
-        report("id=\(instance) \(event) preview=\(isPreview) attached=\(window != nil) view=\(Int(bounds.width))x\(Int(bounds.height)) screen=\(Int(screen?.frame.width ?? 0))x\(Int(screen?.frame.height ?? 0)) scale=\(screen?.backingScaleFactor ?? 0) animations=0 timer=\(isAnimating) markerActive=\(markerEpoch != nil) frameCallbacks=\(diagnosticFrames)")
-    }
+    override func stopAnimation() { requested = false;suspend();reportState("stop") }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow();reconcile() }
+    override func setFrameSize(_ size: NSSize) { super.setFrameSize(size);reconcile() }
     private func suspend() {
-        generation += 1; ticket?.cancel(); ticket = nil; signature = nil
-        markerProgress = 0; markerEpoch = nil; diagnosticFrames = 0; diagnosticImage = nil
-        previousFrameTime = nil; frameIntervals.removeAll(); frameWorkTimes.removeAll()
+        generation += 1;session?.cancel();session = nil;signature = nil
+        current = nil;incoming = nil;prepared = nil;loading = false;failed = false;frames = 0
         super.stopAnimation()
+        needsDisplay = true
     }
     private func reconcile() {
-        guard requested, window != nil, let screen = window?.screen, bounds.width > 0, bounds.height > 0 else {
-            if signature != nil || isAnimating { suspend(); reportState("inactive") }
-            return
+        guard requested, let screen = window?.screen, bounds.width > 0, bounds.height > 0 else {
+            if signature != nil || isAnimating { suspend();reportState("inactive") };return
         }
         let route = staticPreview ? "H" : (screen.frame.width >= screen.frame.height ? "H" : "V")
-        let next = staticPreview ? "preview-\(bounds.size)" : "\(route)-\(bounds.size)-\(screen.frame)-\(screen.backingScaleFactor)"
-        guard signature != next else { return }
-        suspend(); signature = next
-        // Keep the native timer paired with the framework's stopAnimation contract.
+        let loaded = SettingsStore.load()
+        let key = "\(route)-\(bounds.size)-\(screen.backingScaleFactor)"
+        guard signature != key || settings != loaded else { return }
+        suspend();signature = key;settings = loaded
+        status = "正在读取照片…"
+        guard let bookmark = settings.folders[route] else { status = "请在选项中选择\(route == "H" ? "横屏" : "竖屏")照片文件夹";needsDisplay = true;return }
+        session = PhotoSession(settings: settings, bookmark: bookmark, viewport: bounds.size, scale: screen.backingScaleFactor, seed: rng.next())
         if !staticPreview { super.startAnimation() }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        label.contentsScale = screen.backingScaleFactor
-        label.frame = CGRect(x: 0, y: bounds.height * 0.43, width: bounds.width, height: min(150, bounds.height * 0.5))
-        label.string = "G1 \(route) · \(staticPreview ? "PREVIEW" : "HOST")\n等待合成图库 · \(instance)"
-        CATransaction.commit()
         reportState("activate route=\(route)")
-        guard let data = (moduleDefaults()?.dictionary(forKey: "G1Folders") as? [String: Data])?[route] else {
-            label.string = "G1 \(route)\n请在选项中选择合成图库"
-            if staticPreview { finishPreview() }; return
-        }
-        let work = WorkTicket(); ticket = work
-        let epoch = generation, id = instance
-        // A bounded thumbnail suffices for the G1 marker; no catalog or player here.
-        worker.async { [weak self] in
-            guard !work.isCancelled else { return }
-            Resources.shared.change(tasks: 1, id: id)
-            defer { Resources.shared.change(tasks: -1, id: id) }
-            do {
-                var stale = false
-                let url = try URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
-                guard !work.isCancelled else { return }
-                let scoped = url.startAccessingSecurityScopedResource()
-                if scoped { Resources.shared.change(scopes: 1, id: id) }
-                defer { if scoped { url.stopAccessingSecurityScopedResource(); Resources.shared.change(scopes: -1, id: id) } }
-                guard !stale else { throw CocoaError(.fileReadUnknown) }
-                let marker = url.appendingPathComponent("\(route)-marker.png")
-                guard let source = CGImageSourceCreateWithURL(marker as CFURL, nil), !work.isCancelled,
-                      let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 2048, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { throw CocoaError(.fileReadCorruptFile) }
-                report("id=\(id) decoded route=\(route) scope=\(scoped) stale=\(stale) pixels=\(image.width)x\(image.height)")
-                guard !work.isCancelled else { return }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, !work.isCancelled, self.generation == epoch, self.requested else { return }
-                    self.diagnosticImage = image
-                    self.needsDisplay = true
-                    self.label.string = "G1 \(route) · \(self.staticPreview ? "PREVIEW" : "HOST")\n\(id) · \(self.staticPreview ? "静态预览" : "白块应往返移动并明暗变化")"
-                    // Preview is static and never schedules continuous diagnostic work.
-                    if self.staticPreview { self.finishPreview() } else { self.startMarker() }
-                    self.reportState("presented route=\(route)")
-                }
-            } catch {
-                report("id=\(id) readFailed route=\(route) code=\((error as NSError).code)")
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, !work.isCancelled, self.generation == epoch else { return }
-                    self.label.string = "G1 \(route) 读取失败\n请重新选择合成图库"
-                    if self.staticPreview { self.finishPreview() }
-                }
+        requestNext()
+    }
+    private func card(_ photo: DecodedPhoto, now: CFTimeInterval) -> Card {
+        Card(photo: photo, path: KenBurnsPath(image: CGSize(width: photo.image.width, height: photo.image.height), viewport: bounds.size,
+                                            backingScale: window?.screen?.backingScaleFactor ?? 1, maximumZoom: settings.maximumZoom, generator: &rng), start: now)
+    }
+    private func requestNext() {
+        guard !loading, !failed, prepared == nil, let session else { return }
+        loading = true;let epoch = generation
+        session.requestNext { [weak self] result in
+            guard let self, self.generation == epoch, self.requested else { return }
+            self.loading = false
+            switch result {
+            case .success(let photo):
+                if self.current == nil {
+                    self.current = self.card(photo, now: CACurrentMediaTime());self.status = ""
+                    if !self.staticPreview { self.requestNext() }
+                } else { self.prepared = photo }
+            case .failure:
+                self.failed = true
+                self.status = "未找到可读照片；请检查文件夹或在选项中重新选择。"
+                if self.current == nil { self.stopEmptyTimer() }
             }
+            self.needsDisplay = true;self.layer?.setNeedsDisplay();self.displayIfNeeded()
         }
     }
-    private func finishPreview() { super.stopAnimation() }
-    private func startMarker() {
-        // Native frames redraw the background and marker together; no moving sublayer.
-        markerEpoch = CACurrentMediaTime()
-        diagnosticFrames = 0
+    // Stop empty/error sessions without invalidating the status message or issuing retries every frame.
+    private func stopEmptyTimer() { super.stopAnimation() }
+    override func animateOneFrame() {
+        if frames % 60 == 0 { reconcile() }
+        guard requested, !staticPreview, window != nil, bounds.width > 0, bounds.height > 0 else { return }
+        let now = CACurrentMediaTime()
+        let timing = PlaybackTiming.evaluate(now: now, currentStart: current?.start, incomingStart: incoming?.start,
+                                             ready: prepared != nil, duration: settings.duration, fade: settings.fade)
+        if timing.finishIncoming, let next = incoming { current = next;incoming = nil }
+        if timing.startNext, let photo = prepared {
+            prepared = nil
+            let next = card(photo, now: now)
+            if settings.fade == 0 { current = next } else { incoming = next }
+            requestNext()
+        }
+        frames += 1
+        needsDisplay = true;layer?.setNeedsDisplay();displayIfNeeded()
+        if frames % 600 == 0 { reportState("frames") }
     }
-    deinit {
-        ticket?.cancel()
-        for observer in observers { NotificationCenter.default.removeObserver(observer) }
-        report("id=\(instance) deinit")
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState();ctx.clip(to: bounds);ctx.setBlendMode(.copy)
+        ctx.setFillColor(CGColor(gray: 0.12, alpha: 1));ctx.fill(bounds)
+        ctx.setBlendMode(.normal)
+        let now = CACurrentMediaTime()
+        func paint(_ value: Card, alpha: CGFloat) {
+            let progress = staticPreview ? 0 : (now - value.start) / (settings.duration + settings.fade)
+            let rect = value.path.rect(progress: progress)
+            ctx.setAlpha(alpha);ctx.draw(value.photo.image, in: rect)
+        }
+        if let current { paint(current, alpha: 1) }
+        if let incoming { paint(incoming, alpha: CGFloat(min(1, max(0, (now - incoming.start) / max(0.001, settings.fade))))) }
+        ctx.restoreGState()
+        if current == nil {
+            let paragraph = NSMutableParagraphStyle();paragraph.alignment = .center
+            let text = NSAttributedString(string: status, attributes: [.font: NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.lightGray, .paragraphStyle: paragraph])
+            text.draw(in: CGRect(x: 20, y: bounds.midY - 30, width: max(0, bounds.width - 40), height: 80))
+        }
     }
+    private func reportState(_ event: String) {
+        report("id=\(instance) \(event) staticPreview=\(staticPreview) attached=\(window != nil) timer=\(isAnimating) loading=\(loading) resident=\((current == nil ? 0 : 1) + (incoming == nil ? 0 : 1) + (prepared == nil ? 0 : 1)) cachedBytes=\(ImageBudget.shared.current) frames=\(frames)")
+    }
+    deinit { session?.cancel();for observer in observers { NotificationCenter.default.removeObserver(observer) };report("id=\(instance) deinit") }
 }
