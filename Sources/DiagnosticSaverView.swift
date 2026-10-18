@@ -1,0 +1,154 @@
+import AppKit
+import ScreenSaver
+import QuartzCore
+import ImageIO
+
+@objc(MultiscreenSaverView)
+final class DiagnosticSaverView: ScreenSaverView {
+    private let instance = String(UUID().uuidString.prefix(8))
+    private let imageLayer = CALayer()
+    private let movingMarker = CALayer()
+    private let label = CATextLayer()
+    private let worker = DispatchQueue(label: "com.lusheng.MultiscreenSaver.g1.decode", qos: .userInitiated)
+    private var ticket: WorkTicket?
+    private var generation = 0
+    private var requested = false
+    private var signature: String?
+    private var configuration: ConfigurationController?
+    private var observers: [NSObjectProtocol] = []
+
+    override init?(frame: NSRect, isPreview: Bool) {
+        super.init(frame: frame, isPreview: isPreview)
+        setup()
+    }
+    required init?(coder: NSCoder) { super.init(coder: coder); setup() }
+    private func setup() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.darkGray.cgColor
+        layer?.masksToBounds = true
+        imageLayer.contentsGravity = .resizeAspectFill
+        layer?.addSublayer(imageLayer)
+        movingMarker.backgroundColor = NSColor.white.cgColor
+        layer?.addSublayer(movingMarker)
+        label.fontSize = 26; label.alignmentMode = .center
+        label.foregroundColor = NSColor.white.cgColor
+        label.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
+        label.isWrapped = true
+        layer?.addSublayer(label)
+        animationTimeInterval = 1 // Host timer only checks diagnostics; CA drives motion.
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, note.object as? NSWindow === self.window else { return }; self.reconcile()
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeBackingPropertiesNotification, object: nil, queue: .main) { [weak self] _ in self?.reconcile() })
+        report("id=\(instance) init pid=\(ProcessInfo.processInfo.processIdentifier) preview=\(isPreview) build=\(Bundle(for: Self.self).object(forInfoDictionaryKey: "CFBundleVersion") ?? "unknown")")
+    }
+    override var hasConfigureSheet: Bool { true }
+    override var configureSheet: NSWindow? {
+        if configuration == nil { configuration = ConfigurationController() }
+        if let panel = configuration?.window {
+            DispatchQueue.main.async {
+                report("configuration presentation visible=\(panel.isVisible) sheet=\(panel.sheetParent != nil)")
+                if !panel.isVisible { panel.makeKeyAndOrderFront(nil) }
+                report("configuration afterOrder visible=\(panel.isVisible)")
+            }
+        }
+        return configuration?.window
+    }
+    override func startAnimation() {
+        requested = true; reportState("start")
+        reconcile()
+    }
+    override func stopAnimation() {
+        requested = false; suspend(); reportState("stop")
+        super.stopAnimation()
+    }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); reportState("window"); reconcile() }
+    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); reconcile() }
+    override func animateOneFrame() { reconcile() }
+
+    private func reportState(_ event: String) {
+        let screen = window?.screen
+        report("id=\(instance) \(event) preview=\(isPreview) attached=\(window != nil) view=\(Int(bounds.width))x\(Int(bounds.height)) screen=\(Int(screen?.frame.width ?? 0))x\(Int(screen?.frame.height ?? 0)) scale=\(screen?.backingScaleFactor ?? 0) animations=\(movingMarker.animationKeys()?.count ?? 0) timer=\(isAnimating)")
+    }
+    private func suspend() {
+        generation += 1; ticket?.cancel(); ticket = nil; signature = nil
+        movingMarker.removeAllAnimations(); imageLayer.contents = nil
+        super.stopAnimation()
+    }
+    private func reconcile() {
+        guard requested, window != nil, let screen = window?.screen, bounds.width > 0, bounds.height > 0 else {
+            if signature != nil || isAnimating { suspend(); reportState("inactive") }
+            return
+        }
+        let route = isPreview ? "H" : (screen.frame.width >= screen.frame.height ? "H" : "V")
+        let next = "\(route)-\(bounds.size)-\(screen.frame)-\(screen.backingScaleFactor)"
+        guard signature != next else { return }
+        suspend(); signature = next
+        // Keep the native timer paired with the framework's stopAnimation contract.
+        super.startAnimation()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        imageLayer.frame = bounds
+        movingMarker.frame = CGRect(x: bounds.width * 0.1, y: bounds.height * 0.18, width: 50, height: 50)
+        label.contentsScale = screen.backingScaleFactor
+        label.frame = CGRect(x: 0, y: bounds.height * 0.43, width: bounds.width, height: min(150, bounds.height * 0.5))
+        label.string = "G1 \(route) · \(isPreview ? "PREVIEW" : "HOST")\n等待合成图库 · \(instance)"
+        CATransaction.commit()
+        reportState("activate route=\(route)")
+        guard let data = (moduleDefaults()?.dictionary(forKey: "G1Folders") as? [String: Data])?[route] else {
+            label.string = "G1 \(route)\n请在选项中选择合成图库"
+            if isPreview { finishPreview() }; return
+        }
+        let work = WorkTicket(); ticket = work
+        let epoch = generation, id = instance
+        // A bounded thumbnail suffices for the G1 marker; no catalog or player here.
+        worker.async { [weak self] in
+            guard !work.isCancelled else { return }
+            Resources.shared.change(tasks: 1, id: id)
+            defer { Resources.shared.change(tasks: -1, id: id) }
+            do {
+                var stale = false
+                let url = try URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
+                guard !work.isCancelled else { return }
+                let scoped = url.startAccessingSecurityScopedResource()
+                if scoped { Resources.shared.change(scopes: 1, id: id) }
+                defer { if scoped { url.stopAccessingSecurityScopedResource(); Resources.shared.change(scopes: -1, id: id) } }
+                guard !stale else { throw CocoaError(.fileReadUnknown) }
+                let marker = url.appendingPathComponent("\(route)-marker.png")
+                guard let source = CGImageSourceCreateWithURL(marker as CFURL, nil), !work.isCancelled,
+                      let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 2048, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { throw CocoaError(.fileReadCorruptFile) }
+                report("id=\(id) decoded route=\(route) scope=\(scoped) stale=\(stale) pixels=\(image.width)x\(image.height)")
+                guard !work.isCancelled else { return }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !work.isCancelled, self.generation == epoch, self.requested else { return }
+                    self.imageLayer.contents = image
+                    self.label.string = "G1 \(route) · \(self.isPreview ? "PREVIEW" : "HOST")\n\(id) · 白块应往返移动并明暗变化"
+                    // Preview is static and never schedules continuous diagnostic work.
+                    if self.isPreview { self.finishPreview() } else { self.startMarker() }
+                    self.reportState("presented route=\(route)")
+                }
+            } catch {
+                report("id=\(id) readFailed route=\(route) code=\((error as NSError).code)")
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !work.isCancelled, self.generation == epoch else { return }
+                    self.label.string = "G1 \(route) 读取失败\n请重新选择合成图库"
+                    if self.isPreview { self.finishPreview() }
+                }
+            }
+        }
+    }
+    private func finishPreview() { super.stopAnimation() }
+    private func startMarker() {
+        let move = CABasicAnimation(keyPath: "transform.translation.x")
+        move.fromValue = 0; move.toValue = max(0, bounds.width * 0.8 - 50)
+        move.duration = 3; move.autoreverses = true; move.repeatCount = .infinity
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0.2; fade.duration = 1.5
+        fade.autoreverses = true; fade.repeatCount = .infinity
+        movingMarker.add(move, forKey: "G1.translation"); movingMarker.add(fade, forKey: "G1.opacity")
+    }
+    deinit {
+        ticket?.cancel(); movingMarker.removeAllAnimations()
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        report("id=\(instance) deinit")
+    }
+}
