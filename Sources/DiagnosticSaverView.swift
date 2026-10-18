@@ -40,6 +40,10 @@ final class DiagnosticSaverView: ScreenSaverView {
             guard let self, note.object as? NSWindow === self.window else { return }; self.reconcile()
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeBackingPropertiesNotification, object: nil, queue: .main) { [weak self] _ in self?.reconcile() })
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, note.object as? NSWindow === self.window else { return }
+            self.reportState("occlusion")
+        })
         report("id=\(instance) init pid=\(ProcessInfo.processInfo.processIdentifier) preview=\(isPreview) build=\(Bundle(for: Self.self).object(forInfoDictionaryKey: "CFBundleVersion") ?? "unknown")")
     }
     override var hasConfigureSheet: Bool { true }
@@ -68,6 +72,11 @@ final class DiagnosticSaverView: ScreenSaverView {
 
     private func reportState(_ event: String) {
         let screen = window?.screen
+        let engineRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" && !$0.isTerminated }
+        report("id=\(instance) engineFacts event=\(event) running=\(engineRunning)")
+        if let window {
+            report("id=\(instance) windowFacts event=\(event) visible=\(window.isVisible) occluded=\(!window.occlusionState.contains(.visible)) level=\(window.level.rawValue) style=\(window.styleMask.rawValue) activeSpace=\(window.isOnActiveSpace) windowSize=\(Int(window.frame.width))x\(Int(window.frame.height)) visibleRect=\(Int(visibleRect.width))x\(Int(visibleRect.height))")
+        }
         report("id=\(instance) \(event) preview=\(isPreview) attached=\(window != nil) view=\(Int(bounds.width))x\(Int(bounds.height)) screen=\(Int(screen?.frame.width ?? 0))x\(Int(screen?.frame.height ?? 0)) scale=\(screen?.backingScaleFactor ?? 0) animations=\(movingMarker.animationKeys()?.count ?? 0) timer=\(isAnimating)")
     }
     private func suspend() {
