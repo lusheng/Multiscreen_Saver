@@ -130,18 +130,13 @@ final class DiagnosticSaverView: ScreenSaverView {
     }
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        ctx.saveGState();ctx.clip(to: bounds);ctx.setBlendMode(.copy)
-        ctx.setFillColor(CGColor(gray: 0.12, alpha: 1));ctx.fill(bounds)
-        ctx.setBlendMode(.normal)
         let now = CACurrentMediaTime()
-        func paint(_ value: Card, alpha: CGFloat) {
+        func frame(_ value: Card) -> PhotoFrame {
             let progress = staticPreview ? 0 : (now - value.start) / (settings.duration + settings.fade)
-            let rect = value.path.rect(progress: progress)
-            ctx.setAlpha(alpha);ctx.draw(value.photo.image, in: rect)
+            return PhotoFrame(image: value.photo.image, rect: value.path.rect(progress: progress))
         }
-        if let current { paint(current, alpha: 1) }
-        if let incoming { paint(incoming, alpha: CGFloat(min(1, max(0, (now - incoming.start) / max(0.001, settings.fade))))) }
-        ctx.restoreGState()
+        let fraction = incoming.map { (now - $0.start) / max(0.001, settings.fade) } ?? 0
+        PhotoRenderer.draw(in: ctx, bounds: bounds, lower: current.map(frame), upper: incoming.map(frame), fraction: fraction)
         if current == nil {
             let paragraph = NSMutableParagraphStyle();paragraph.alignment = .center
             let text = NSAttributedString(string: status, attributes: [.font: NSFont.systemFont(ofSize: 22), .foregroundColor: NSColor.lightGray, .paragraphStyle: paragraph])

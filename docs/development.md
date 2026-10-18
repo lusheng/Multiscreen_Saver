@@ -5,6 +5,7 @@
 ```sh
 ./scripts/build.sh             # Release；可用 CONFIGURATION=Debug 切换
 ./scripts/test-core.sh
+./scripts/test-render.sh
 ./scripts/test-lifecycle.sh
 ```
 
