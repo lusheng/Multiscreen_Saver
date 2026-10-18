@@ -13,6 +13,12 @@ final class DiagnosticSaverView: ScreenSaverView {
     private var ticket: WorkTicket?
     private var generation = 0
     private var requested = false
+    private var staticPreview = true
+    private static var engineRunning: Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" && !$0.isTerminated
+        }
+    }
     private var signature: String?
     private var configuration: ConfigurationController?
     private var observers: [NSObjectProtocol] = []
@@ -23,6 +29,10 @@ final class DiagnosticSaverView: ScreenSaverView {
     }
     required init?(coder: NSCoder) { super.init(coder: coder); setup() }
     private func setup() {
+        // G1 build 5 observed settings proxies with isPreview=false. Freeze their
+        // identity before repeated starts; engine launch must not promote them.
+        // This target-system policy remains subject to real-host G1 validation.
+        staticPreview = isPreview || !Self.engineRunning
         wantsLayer = true
         layer?.backgroundColor = NSColor.darkGray.cgColor
         layer?.masksToBounds = true
@@ -72,8 +82,8 @@ final class DiagnosticSaverView: ScreenSaverView {
 
     private func reportState(_ event: String) {
         let screen = window?.screen
-        let engineRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" && !$0.isTerminated }
-        report("id=\(instance) engineFacts event=\(event) running=\(engineRunning)")
+        let engineRunning = Self.engineRunning
+        report("id=\(instance) engineFacts event=\(event) running=\(engineRunning) staticPreview=\(staticPreview)")
         if let window {
             report("id=\(instance) windowFacts event=\(event) visible=\(window.isVisible) occluded=\(!window.occlusionState.contains(.visible)) level=\(window.level.rawValue) style=\(window.styleMask.rawValue) activeSpace=\(window.isOnActiveSpace) windowSize=\(Int(window.frame.width))x\(Int(window.frame.height)) visibleRect=\(Int(visibleRect.width))x\(Int(visibleRect.height))")
         }
@@ -89,23 +99,26 @@ final class DiagnosticSaverView: ScreenSaverView {
             if signature != nil || isAnimating { suspend(); reportState("inactive") }
             return
         }
-        let route = isPreview ? "H" : (screen.frame.width >= screen.frame.height ? "H" : "V")
-        let next = "\(route)-\(bounds.size)-\(screen.frame)-\(screen.backingScaleFactor)"
+        guard staticPreview || Self.engineRunning else {
+            suspend(); reportState("engineInactive"); return
+        }
+        let route = staticPreview ? "H" : (screen.frame.width >= screen.frame.height ? "H" : "V")
+        let next = staticPreview ? "preview-\(bounds.size)" : "\(route)-\(bounds.size)-\(screen.frame)-\(screen.backingScaleFactor)"
         guard signature != next else { return }
         suspend(); signature = next
         // Keep the native timer paired with the framework's stopAnimation contract.
-        super.startAnimation()
+        if !staticPreview { super.startAnimation() }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         imageLayer.frame = bounds
         movingMarker.frame = CGRect(x: bounds.width * 0.1, y: bounds.height * 0.18, width: 50, height: 50)
         label.contentsScale = screen.backingScaleFactor
         label.frame = CGRect(x: 0, y: bounds.height * 0.43, width: bounds.width, height: min(150, bounds.height * 0.5))
-        label.string = "G1 \(route) · \(isPreview ? "PREVIEW" : "HOST")\n等待合成图库 · \(instance)"
+        label.string = "G1 \(route) · \(staticPreview ? "PREVIEW" : "HOST")\n等待合成图库 · \(instance)"
         CATransaction.commit()
         reportState("activate route=\(route)")
         guard let data = (moduleDefaults()?.dictionary(forKey: "G1Folders") as? [String: Data])?[route] else {
             label.string = "G1 \(route)\n请在选项中选择合成图库"
-            if isPreview { finishPreview() }; return
+            if staticPreview { finishPreview() }; return
         }
         let work = WorkTicket(); ticket = work
         let epoch = generation, id = instance
@@ -130,9 +143,9 @@ final class DiagnosticSaverView: ScreenSaverView {
                 DispatchQueue.main.async { [weak self] in
                     guard let self, !work.isCancelled, self.generation == epoch, self.requested else { return }
                     self.imageLayer.contents = image
-                    self.label.string = "G1 \(route) · \(self.isPreview ? "PREVIEW" : "HOST")\n\(id) · 白块应往返移动并明暗变化"
+                    self.label.string = "G1 \(route) · \(self.staticPreview ? "PREVIEW" : "HOST")\n\(id) · \(self.staticPreview ? "静态预览" : "白块应往返移动并明暗变化")"
                     // Preview is static and never schedules continuous diagnostic work.
-                    if self.isPreview { self.finishPreview() } else { self.startMarker() }
+                    if self.staticPreview { self.finishPreview() } else { self.startMarker() }
                     self.reportState("presented route=\(route)")
                 }
             } catch {
@@ -140,7 +153,7 @@ final class DiagnosticSaverView: ScreenSaverView {
                 DispatchQueue.main.async { [weak self] in
                     guard let self, !work.isCancelled, self.generation == epoch else { return }
                     self.label.string = "G1 \(route) 读取失败\n请重新选择合成图库"
-                    if self.isPreview { self.finishPreview() }
+                    if self.staticPreview { self.finishPreview() }
                 }
             }
         }

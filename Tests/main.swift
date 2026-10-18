@@ -25,5 +25,13 @@ view.removeFromSuperview()
 view.stopAnimation()
 precondition(view.hasConfigureSheet)
 precondition(view.configureSheet != nil)
+let proxy = DiagnosticSaverView(frame: NSRect(x: 0, y: 0, width: 640, height: 360), isPreview: false)!
+window.contentView = proxy
+proxy.startAnimation()
+RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+precondition(!proxy.isAnimating, "without the system engine, an unflagged proxy must remain static")
+proxy.startAnimation()
+precondition(!proxy.isAnimating, "repeated starts must not promote the preview")
+proxy.stopAnimation()
 print("PASS: detached, static preview, 20 ordinary-process stop cycles, zero size, configuration construction")
 print("NOT real-host evidence; G1 remains PENDING")
